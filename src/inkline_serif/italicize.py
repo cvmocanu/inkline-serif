@@ -17,6 +17,7 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 
 from inkline_serif.glyphs import GlyphSet, bounds, glyph_name
+from inkline_serif.style_axes import set_style_axes
 
 # OS/2.fsSelection and head.macStyle bits
 FS_ITALIC = 1 << 0
@@ -199,3 +200,4 @@ def set_italic_flags(
     fs_selection = (os2.fsSelection & ~(FS_REGULAR | FS_BOLD | FS_ITALIC)) | style_bits  # pyrefly: ignore[missing-attribute]
     os2.fsSelection = fs_selection  # pyrefly: ignore[missing-attribute]
     font["head"].macStyle = MAC_ITALIC | (MAC_BOLD if bold else 0)  # pyrefly: ignore[missing-attribute]
+    set_style_axes(font=font, italic=True)

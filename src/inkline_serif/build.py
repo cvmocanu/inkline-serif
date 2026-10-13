@@ -18,6 +18,7 @@ from inkline_serif.embolden import Emboldening, embolden
 from inkline_serif.italicize import Slant, italicize
 from inkline_serif.outlines import find_bad_outlines
 from inkline_serif.preview import LabeledFont, save_preview
+from inkline_serif.style_axes import set_style_axes
 
 FAMILY = "Inkline Serif"
 
@@ -90,6 +91,7 @@ def build_upright(weight: Weight) -> bytes:
     font = TTFont(INPUT_DIR / weight.source)
     embolden(font=font, emboldening=weight.emboldening)
     naming.rename(font=font, family=FAMILY, style=weight.upright_style)
+    set_style_axes(font=font, italic=False)
     e = weight.emboldening
     naming.set_description(
         font=font,

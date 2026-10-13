@@ -1,4 +1,5 @@
 from fontTools.fontBuilder import FontBuilder
+from fontTools.otlLib.builder import buildStatTable
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 
@@ -12,8 +13,13 @@ def font(
     glyphs: dict[str, list[Contour]] | None = None,
     family: str = "Any Family",
     style: str = "Regular",
+    weight_value: float = 400,
+    weight_name: str = "Regular",
 ) -> TTFont:
-    """A TrueType font whose glyphs are drawn as polygons; `.notdef` is added empty."""
+    """
+    A TrueType font whose glyphs are drawn as polygons; `.notdef` is added empty.
+    Its STAT has a weight axis only, as static Google Fonts builds do.
+    """
     drawn = {".notdef": TTGlyphPen(None).glyph()}
     for name, contours in (glyphs or {}).items():
         pen = TTGlyphPen(None)
@@ -43,6 +49,11 @@ def font(
     )
     builder.setupOS2()
     builder.setupPost()
+    buildStatTable(
+        builder.font,
+        axes=[{"tag": "wght", "name": "Weight", "values": [{"value": weight_value, "name": weight_name}]}],
+        macNames=False,
+    )
     return builder.font
 
 

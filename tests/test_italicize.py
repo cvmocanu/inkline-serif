@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 from builders import font
+from font_inspection import axis_values
 
 from inkline_serif.italicize import (
     FS_BOLD,
@@ -77,3 +78,11 @@ def test_marks_the_font_italic_and_clears_regular(
     assert head.macStyle == mac_style
     assert post.italicAngle == -10
     assert hhea.caretSlopeRun / hhea.caretSlopeRise == pytest.approx(math.tan(math.radians(10)), abs=1e-3)
+
+
+def test_adds_the_italic_axis_value() -> None:
+    regular = font(style="Regular", weight_value=400, weight_name="Regular")
+
+    set_italic_flags(font=regular, angle_deg=10, bold=False)
+
+    assert ("ital", 1, "Italic", 0) in axis_values(regular)

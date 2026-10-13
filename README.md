@@ -44,6 +44,7 @@ The tuning values are the constants at the top of [`build.py`](src/inkline_serif
    - GPOS pair-kerning values are scaled by the condense factor.
    - `Slant.single_storey_a`: replaces `a` with `d` cut at the `o` overshoot height (pathops intersection), re-oriented clockwise. Accented a's follow automatically because they are composites. `g` stays two-storey.
    - Sets `post.italicAngle`, the `hhea` caret slope, the `OS/2.fsSelection` italic/bold bits (clearing REGULAR) and `head.macStyle`, so the four files link as one family.
+   - Every style gets a STAT table with a weight and an italic axis ([`style_axes.py`](src/inkline_serif/style_axes.py)), so apps that read STAT group the uprights and italics as one family. Domine's own STAT has a weight axis only.
 3. **Hint with ttfautohint**, with strong stem widths in every rendering mode, which snaps stems to full pixels.
 4. **Check the outlines** ([`outlines.py`](src/inkline_serif/outlines.py)): the build fails, and writes nothing, if any glyph is counter-clockwise or has overlaps.
 5. **Write** the fonts with a copy of `OFL.txt` to `output/fonts/`, then render the previews to `output/previews/`.
@@ -60,6 +61,7 @@ src/inkline_serif/
   embolden.py         anisotropic emboldening
   italicize.py        the oblique and its style flags
   naming.py           family and style names
+  style_axes.py       the STAT weight and italic axes
   outlines.py         contour direction and overlap normalization and checks
   glyphs.py           glyph lookup by character
   measure.py          stroke widths and FreeType ink coverage (inkline-measure)
