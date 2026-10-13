@@ -4,6 +4,7 @@ Run from the project root: `uv run inkline-build`. The tuning values are the con
 """
 
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from io import BytesIO
@@ -57,16 +58,20 @@ INPUT_DIR = Path("input")
 FONTS_DIR = Path("output/fonts")
 PREVIEWS_DIR = Path("output/previews")
 LICENSE = "OFL.txt"
+# The fonts are stamped with the time of the last commit that changed these, so a rebuild of unchanged sources
+# reproduces the committed fonts byte for byte, and a commit of only the output leaves that time alone.
+BUILD_INPUTS = ("input", "src", "pyproject.toml", "uv.lock")
 
 
 def main() -> None:
     if not INPUT_DIR.is_dir():
         sys.exit(f"the input directory {INPUT_DIR}/ is missing; run inkline-build from the project root")
+    epoch = last_change_epoch()
     fonts: dict[str, bytes] = {}
     for weight in WEIGHTS:
         upright = build_upright(weight)
-        fonts[weight.upright_style] = hint(upright)
-        fonts[weight.italic_style] = hint(build_italic(upright=upright, weight=weight))
+        fonts[weight.upright_style] = hint(font=upright, epoch=epoch)
+        fonts[weight.italic_style] = hint(font=build_italic(upright=upright, weight=weight), epoch=epoch)
 
     failed = False
     for style, data in fonts.items():
@@ -114,14 +119,31 @@ def build_italic(
     return to_bytes(font)
 
 
-def hint(font: bytes) -> bytes:
+def hint(
+    font: bytes,
+    epoch: int,
+) -> bytes:
+    """Autohints the font, and stamps it as modified at `epoch` (Unix seconds)."""
     return ttfautohint(
         in_buffer=font,
+        epoch=epoch,
         hinting_range_max=HINTING_RANGE_MAX,
         gray_stem_width_mode=STEM_WIDTH_MODE,
         gdi_cleartype_stem_width_mode=STEM_WIDTH_MODE,
         dw_cleartype_stem_width_mode=STEM_WIDTH_MODE,
     )
+
+
+def last_change_epoch() -> int:
+    result = subprocess.run(
+        ["git", "log", "-1", "--format=%at", "--", *BUILD_INPUTS],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        sys.exit(f"git found no commit that changed {', '.join(BUILD_INPUTS)} to date the fonts by: {result.stderr}")
+    return int(result.stdout)
 
 
 def write_previews() -> None:

@@ -79,7 +79,9 @@ uv run inkline-build    # rebuilds output/
 ./check.sh              # format, lint, type check, tests
 ```
 
-A clean build reproduces the committed fonts table for table; only the timestamps in `head` differ.
+The fonts are stamped with the author date of the last commit that changed `input/`, `src/`, `pyproject.toml` or `uv.lock`,
+so rebuilding unchanged sources reproduces the committed `output/` byte for byte. After committing such a change,
+rebuild and commit the output, or amend it into the same commit.
 
 ## Compare against Bookerly
 
