@@ -4,11 +4,12 @@ A version of [Domine](https://github.com/googlefonts/domine) modified to read be
 It keeps Domine's large x-height and overall look, but adds the stroke weight and hinting that make
 Bookerly look darker, plus a generated Italic and Bold Italic, which Domine lacks.
 
-Styles: `fonts/InklineSerif-{Regular,Bold,Italic,BoldItalic}.ttf`. To install, copy all four into the Kindle's `fonts/` folder.
+The fonts are in [`output/fonts/`](output/fonts/). To install them, copy the `.ttf` files into the Kindle's `fonts/` folder.
+[`output/previews/`](output/previews/) shows them at 10 pt and 300 ppi, quantized to e-ink's 16 grey levels.
 
 ## Why: Domine vs Bookerly
 
-The question was why Domine looks lighter than Bookerly at the same weight level. Measured with `tools/measure.py`
+The question was why Domine looks lighter than Bookerly at the same weight level. Measured with `inkline-measure`
 (Bookerly-Regular from Amazon's Alexa/Echo branding kit, not included here):
 
 | Metric (Regular) | Bookerly | Domine | Inkline Serif |
@@ -28,52 +29,55 @@ Findings:
 
 ## What the build does
 
-1. **`tools/embolden.py`: thicken strokes, more horizontally than vertically.**
-   - Port of FreeType's `FT_Outline_EmboldenXY`: each point moves outward along the corner bisector, so stems grow by `XS` units and horizontal strokes by `YS`. Counters shrink.
-   - Before that, it runs `removeOverlaps` and forces clockwise contours. **This step is required:** 29 Domine glyphs (`five`, parentheses, `circumflex`, `caron`, `breve`, `germandbls`…) have reversed contours, and others (`oslash`, `dcroat`, `hbar`, `Tbar`…) have overlaps. Without the fix those glyphs get *thinner*, and on the first attempt the "5" visibly did.
-   - Shifts outlines right by `XS/2` and widens advances by `XS`, so side bearings and letter spacing are preserved.
+The tuning values are the constants at the top of [`build.py`](src/inkline_serif/build.py).
+
+1. **Thicken strokes, more horizontally than vertically** ([`embolden.py`](src/inkline_serif/embolden.py)).
+   - Port of FreeType's `FT_Outline_EmboldenXY`: each point moves outward along the corner bisector, so stems grow by `Emboldening.x` units and horizontal strokes by `Emboldening.y`. Counters shrink.
+   - Before that, it merges overlapping contours and forces clockwise contours. **This step is required:** 29 Domine glyphs (`five`, parentheses, `circumflex`, `caron`, `breve`, `germandbls`…) have reversed contours, and others (`oslash`, `dcroat`, `hbar`, `Tbar`…) have overlaps. Without the fix those glyphs get *thinner*.
+   - Shifts outlines right by half the extra stem width and widens advances by all of it, so side bearings and letter spacing are preserved.
    - Composites aren't emboldened directly; their components already are. Only offsets and advances are adjusted.
-   - Drops the old `fpgm`/`prep`/`cvt`/`hdmx`/`LTSH`/`VDMX` tables and renames the family (see License).
-   - Current values: Regular `XS=6 YS=22`, Bold `XS=4 YS=18`.
-2. **`tools/italicize.py`: an optically corrected oblique.** This is not a true italic; the letterforms are not redrawn.
-   - Transform: rotate by `ROT × ANGLE`, then a vertical shear to restore horizontals, then a horizontal shear to reach exactly `ANGLE`, then condense x by `CONDENSE`. It pivots around half the x-height so glyphs don't drift right.
-   - A pure shear thins stems by cos(angle); the rotation part compensates for that. The script prints a sanity line, which should read `vertical -> 10.00 deg, horizontal tilt 0.000 deg`.
-   - Composites with scaled or flipped components (5 glyphs) are decomposed first. Other composites get their offsets mapped through the linear part of the transform.
-   - GPOS pair-kerning values are scaled by `CONDENSE`.
-   - `--single-storey-a`: replaces `a` with `d` cut at the `o` overshoot height (pathops intersection), re-oriented clockwise. Accented a's follow automatically because they are composites. `g` stays two-storey.
+   - Drops the source's hinting tables and renames the family (see License).
+2. **Make an optically corrected oblique** ([`italicize.py`](src/inkline_serif/italicize.py)). This is not a true italic; the letterforms are not redrawn.
+   - Transform: rotate by part of the angle (`Slant.rotation_fraction`), then a vertical shear to restore horizontals, then a horizontal shear to reach exactly `Slant.angle_deg`, then condense x by `Slant.condense`. It pivots around half the x-height so glyphs don't drift right.
+   - A pure shear thins stems by cos(angle); the rotation part compensates for that.
+   - Composites with scaled or flipped components (5 glyphs in Domine) are decomposed first. Other composites get their offsets mapped through the linear part of the transform.
+   - GPOS pair-kerning values are scaled by the condense factor.
+   - `Slant.single_storey_a`: replaces `a` with `d` cut at the `o` overshoot height (pathops intersection), re-oriented clockwise. Accented a's follow automatically because they are composites. `g` stays two-storey.
    - Sets `post.italicAngle`, the `hhea` caret slope, the `OS/2.fsSelection` italic/bold bits (clearing REGULAR) and `head.macStyle`, so the four files link as one family.
-   - Current values: `ANGLE=10 ROT=0.4 CONDENSE=0.97`.
-3. **`ttfautohint`** with `--stem-width-mode=sss --hinting-range-max=96` (snaps stems to full pixels).
-4. **`tools/check_outlines.py`** fails the build if any glyph is counter-clockwise or has overlaps.
-5. **`tools/preview.py`** renders 10 pt at 300 ppi, quantized to 16 grey levels like e-ink, into `docs/*.png`.
+3. **Hint with ttfautohint**, with strong stem widths in every rendering mode, which snaps stems to full pixels.
+4. **Check the outlines** ([`outlines.py`](src/inkline_serif/outlines.py)): the build fails, and writes nothing, if any glyph is counter-clockwise or has overlaps.
+5. **Write** the fonts with a copy of `OFL.txt` to `output/fonts/`, then render the previews to `output/previews/`.
 
 ## Layout
 
 ```
-build.sh              one-command rebuild; all tuning values are at the top
-requirements.txt      pinned Python deps (built with Python 3.13)
-source/               Domine-Regular.ttf, Domine-Bold.ttf (unmodified static Google Fonts builds, OFL)
-tools/
-  embolden.py         IN OUT XS YS "Family" Style
-  italicize.py        IN OUT ANGLE ROT_FRACTION CONDENSE Style [--single-storey-a]
-  check_outlines.py   FONT...    -> exit 1 on bad contours
-  measure.py          Name=font.ttf ...   stems + FreeType ink coverage at 8/10/12 pt @ 300 ppi
-                      (first font is the reference; others are scaled to its x-height)
-  preview.py          OUT.png SCALE Name=font.ttf ...
-fonts/                build output (committed)
-docs/                 preview images
-OFL.txt               Domine's license (must ship with the fonts)
+input/                Domine-Regular.ttf, Domine-Bold.ttf (unmodified static Google Fonts builds) and their OFL.txt
+output/               build output (committed)
+  fonts/              the four Inkline Serif styles and OFL.txt: the folder to distribute
+  previews/           10 pt @ 300 ppi renderings, quantized like e-ink
+src/inkline_serif/
+  build.py            the pipeline and its tuning values (inkline-build)
+  embolden.py         anisotropic emboldening
+  italicize.py        the oblique and its style flags
+  naming.py           family and style names
+  outlines.py         contour direction and overlap normalization and checks
+  glyphs.py           glyph lookup by character
+  measure.py          stroke widths and FreeType ink coverage (inkline-measure)
+  preview.py          e-ink-like sample renderings (inkline-preview)
+tests/
+check.sh              format, lint, type check and tests
 ```
 
 ## Build
 
+Requires [uv](https://docs.astral.sh/uv/). From the project root:
+
 ```bash
-pip install -r requirements.txt     # add --break-system-packages on Debian/Ubuntu system Python
-./build.sh
+uv run inkline-build    # rebuilds output/
+./check.sh              # format, lint, type check, tests
 ```
 
-`build.sh` runs Python with `-I`, so the scripts must be invoked by path, as `build.sh` does.
-A clean build reproduces the delivered fonts with identical outlines (verified).
+A clean build reproduces the committed fonts table for table; only the timestamps in `head` differ.
 
 ## Compare against Bookerly
 
@@ -81,9 +85,11 @@ Bookerly isn't redistributable, so it isn't included. Download it from Amazon's
 [Echo identity guidelines – typography](https://developer.amazon.com/en-US/alexa/branding/echo-guidelines/identity-guidelines/typography), then:
 
 ```bash
-python3 -I tools/measure.py Bookerly=/path/Bookerly-Regular.ttf Domine=source/Domine-Regular.ttf Inkline=fonts/InklineSerif-Regular.ttf
-python3 -I tools/preview.py docs/vs-bookerly.png 1 Bookerly=/path/Bookerly-Regular.ttf Inkline=fonts/InklineSerif-Regular.ttf
+uv run inkline-measure Bookerly=/path/Bookerly-Regular.ttf Domine=input/Domine-Regular.ttf Inkline=output/fonts/InklineSerif-Regular.ttf
+uv run inkline-preview vs-bookerly.png Bookerly=/path/Bookerly-Regular.ttf Inkline=output/fonts/InklineSerif-Regular.ttf
 ```
+
+`inkline-measure` renders every font after the first at the size that matches the first font's x-height.
 
 ## License
 
@@ -102,8 +108,8 @@ python3 -I tools/preview.py docs/vs-bookerly.png 1 Bookerly=/path/Bookerly-Regul
 
 ## Ideas for next steps
 
-- Test on device at several sizes. Tune `REG_Y`, the main lever for darkness, and possibly `REG_X`.
-- Try ttfautohint `--x-height-increase-limit` and `--stem-width-mode` variants, and compare on device.
+- Test on device at several sizes. Tune the Regular's `Emboldening.y`, the main lever for darkness, and possibly its `Emboldening.x`.
+- Try ttfautohint's x-height increase limit and stem width modes, and compare on device.
 - Italic: a single-storey `g`, a `y`/`v`/`w` with italic tails, a narrower `f` with descender, and exit strokes on `n`/`m`/`h`/`u`. Each needs hand-drawn or pathops-built outlines.
 - Per-glyph emboldening exceptions if a glyph fills in at small sizes (watch `e`, `a`, `s`, `ß`, `@`).
-- Add a smoke test that `measure.py` ink coverage stays within a target band after tuning.
+- Add a smoke test that `inkline-measure` ink coverage stays within a target band after tuning.

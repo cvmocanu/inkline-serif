@@ -1,138 +1,201 @@
-"""Make an optically corrected oblique ("italic") from an upright TrueType font.
+"""An optically corrected oblique, made from an upright TrueType font.
 
-Transform = rotate by r, vertical shear to restore horizontals, horizontal shear
-to reach the target angle, plus a slight horizontal condense. Pure shear thins
-stems by cos(angle); the rotation component compensates.
-
-usage: italicize.py IN.ttf OUT.ttf ANGLE_DEG ROT_FRACTION CONDENSE STYLE [--single-storey-a]
+A pure shear thins stems by cos(angle). Part of the slant is therefore done by rotation, which keeps stem widths;
+a vertical shear then restores the horizontals, and a horizontal shear brings the slant to the target angle.
 """
+
 import math
-import sys
+from dataclasses import dataclass
 
 import pathops
+from fontTools.misc.transform import Transform
+from fontTools.pens.areaPen import AreaPen
 from fontTools.pens.recordingPen import DecomposingRecordingPen
+from fontTools.pens.reverseContourPen import ReverseContourPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
-from fontTools.pens.boundsPen import BoundsPen
-from fontTools.misc.transform import Transform
 from fontTools.ttLib import TTFont
 
-src, dst = sys.argv[1], sys.argv[2]
-ANGLE, ROTF, CONDENSE, STYLE = float(sys.argv[3]), float(sys.argv[4]), float(sys.argv[5]), sys.argv[6]
-SINGLE_A = "--single-storey-a" in sys.argv
+from inkline_serif.glyphs import GlyphSet, bounds, glyph_name
 
-f = TTFont(src)
-glyf, hmtx = f["glyf"], f["hmtx"]
-gs = f.getGlyphSet()
-cmap = f.getBestCmap()
+# OS/2.fsSelection and head.macStyle bits
+FS_ITALIC = 1 << 0
+FS_BOLD = 1 << 5
+FS_REGULAR = 1 << 6
+MAC_BOLD = 1 << 0
+MAC_ITALIC = 1 << 1
 
-bp = BoundsPen(gs); gs[cmap[ord("x")]].draw(bp)
-XH = bp.bounds[3]
+PAIR_ADJUSTMENT = 2  # GPOS lookup type
+CARET_SLOPE_RISE = 1000
 
-# --- optional: single-storey 'a' built from 'd' cut at x-height -------------
-if SINGLE_A:
-    dname, aname = cmap[ord("d")], cmap[ord("a")]
-    bp = BoundsPen(gs); gs[cmap[ord("o")]].draw(bp)
-    top = bp.bounds[3]  # x-height incl. overshoot of round letters
-    d = pathops.Path(); gs[dname].draw(d.getPen())
-    box = pathops.Path(); pen = box.getPen()
-    pen.moveTo((-500, -500)); pen.lineTo((-500, top)); pen.lineTo((2000, top)); pen.lineTo((2000, -500)); pen.closePath()
-    cut = pathops.op(d, box, pathops.PathOp.INTERSECTION)
-    from fontTools.pens.areaPen import AreaPen
-    from fontTools.pens.reverseContourPen import ReverseContourPen
-    ap = AreaPen(); cut.draw(ap)
-    tp = TTGlyphPen(None)
-    cut.draw(ReverseContourPen(tp) if ap.value > 0 else tp)  # TrueType wants clockwise
-    g = tp.glyph()
-    glyf[aname] = g
-    g.recalcBounds(glyf)
-    hmtx[aname] = (hmtx[dname][0], g.xMin)
 
-# --- the slant transform ------------------------------------------------------
-r = math.radians(ANGLE * ROTF)
-k = math.tan(math.radians(ANGLE)) / CONDENSE - math.sin(r) * math.cos(r)  # exact ANGLE after condense
-rot = Transform(math.cos(r), -math.sin(r), math.sin(r), math.cos(r), 0, 0)  # (x,y)->(x cos+y sin, -x sin+y cos)
-vshear = Transform(1, math.tan(r), 0, 1, 0, 0)                               # y += x tan r
-hshear = Transform(1, 0, k, 1, 0, 0)                                         # x += k y
-cond = Transform(CONDENSE, 0, 0, 1, 0, 0)
-c = XH / 2  # slant around half x-height so glyphs don't drift right
-# a.transform(b) applies b first: order = -c, rot, vshear, hshear, condense, +c
-T = Transform().translate(0, c)
-for t in (cond, hshear, vshear, rot):
-    T = T.transform(t)
-T = T.translate(0, -c)
-lin = Transform(T.xx, T.xy, T.yx, T.yy, 0, 0)
+@dataclass(frozen=True)
+class Slant:
+    """
+    The slant `angle_deg` is reached exactly, after `condense` narrows every glyph horizontally.
+    `rotation_fraction` is the share of the angle done by rotation rather than by shear.
+    """
 
-# sanity: vertical maps to ANGLE, horizontal stays horizontal
-vx, vy = lin.transformPoint((0, 1)); hx, hy = lin.transformPoint((1, 0))
-print(f"vertical -> {math.degrees(math.atan2(vx, vy)):.2f} deg, horizontal tilt {math.degrees(math.atan2(hy, hx)):.3f} deg")
+    angle_deg: float
+    rotation_fraction: float
+    condense: float
+    single_storey_a: bool
 
-# composites whose components are scaled/flipped can't be slanted via offsets: decompose them
-for name in f.getGlyphOrder():
-    g = glyf[name]
-    if g.isComposite() and any(hasattr(cp, "transform") for cp in g.components):
-        rp = DecomposingRecordingPen(gs); gs[name].draw(rp)
-        tp = TTGlyphPen(None); rp.replay(tp)
-        glyf[name] = tp.glyph()
-gs = f.getGlyphSet()
 
-new = {}
-for name in f.getGlyphOrder():
-    g = glyf[name]
-    if g.isComposite():
-        continue
-    if g.numberOfContours <= 0:
-        continue
-    tp = TTGlyphPen(gs)
-    gs[name].draw(TransformPen(tp, T))
-    new[name] = tp.glyph()
-for name, g in new.items():
-    glyf[name] = g
-for name in f.getGlyphOrder():
-    g = glyf[name]
-    if g.isComposite():
-        for comp in g.components:
-            # component outlines already transformed (incl. translation about c);
-            # offsets must be mapped by the linear part only
-            comp.x, comp.y = (round(v) for v in lin.transformPoint((comp.x, comp.y)))
-    adv, _ = hmtx[name]
-    g.recalcBounds(glyf)
-    hmtx[name] = (round(adv * CONDENSE), getattr(g, "xMin", 0) if g.numberOfContours else 0)
+def italicize(
+    font: TTFont,
+    slant: Slant,
+    bold: bool,
+) -> None:
+    glyph_set = font.getGlyphSet()
+    x_height = bounds(font=font, char="x")[3]
+    if slant.single_storey_a:
+        cut_single_storey_a(font)
+    # Slanting around half the x-height keeps the glyphs from drifting right.
+    transform = slant_transform(slant=slant, pivot_y=x_height / 2)
+    _decompose_transformed_components(font=font, glyph_set=glyph_set)
+    _transform_glyphs(font=font, transform=transform, condense=slant.condense)
+    _scale_pair_kerning(font=font, factor=slant.condense)
+    set_italic_flags(font=font, angle_deg=slant.angle_deg, bold=bold)
 
-# kerning/positioning values scale with the condense
-if "GPOS" in f:
-    from fontTools.ttLib.tables.otBase import BaseTable
-    def scale_vr(vr):
-        if vr is None: return
-        for a in ("XAdvance", "XPlacement"):
-            if hasattr(vr, a): setattr(vr, a, round(getattr(vr, a) * CONDENSE))
-    for lk in f["GPOS"].table.LookupList.Lookup:
-        for st in lk.SubTable:
-            st = getattr(st, "ExtSubTable", st)
-            if st.LookupType == 2:
-                if st.Format == 1:
-                    for ps in st.PairSet:
-                        for pvr in ps.PairValueRecord: scale_vr(pvr.Value1); scale_vr(pvr.Value2)
-                else:
-                    for c1 in st.Class1Record:
-                        for c2 in c1.Class2Record: scale_vr(c2.Value1); scale_vr(c2.Value2)
 
-# --- style flags & names ------------------------------------------------------
-f["post"].italicAngle = -ANGLE
-f["hhea"].caretSlopeRise = 1000
-f["hhea"].caretSlopeRun = round(1000 * math.tan(math.radians(ANGLE)))
-os2 = f["OS/2"]
-bold = "Bold" in STYLE
-os2.fsSelection = (os2.fsSelection & ~(1 << 6) & ~(1 << 5) & ~1) | 1 | ((1 << 5) if bold else 0)
-f["head"].macStyle = 2 | (1 if bold else 0)
-name = f["name"]
-fam = name.getDebugName(1)
-ps = fam.replace(" ", "") + "-" + STYLE.replace(" ", "")
-for rec in name.names:
-    if rec.nameID == 2: rec.string = STYLE
-    elif rec.nameID == 3: rec.string = f"{ps};modified"
-    elif rec.nameID == 4: rec.string = f"{fam} {STYLE}"
-    elif rec.nameID == 6: rec.string = ps
-name.setName(name.getDebugName(10) + f"; oblique {ANGLE:g} deg, optically corrected", 10, 3, 1, 0x409)
-f.save(dst)
-print("wrote", dst)
+def slant_transform(
+    slant: Slant,
+    pivot_y: float,
+) -> Transform:
+    r = math.radians(slant.angle_deg * slant.rotation_fraction)
+    # The horizontal shear that, after the rotation and the condense, reaches exactly the target angle.
+    k = math.tan(math.radians(slant.angle_deg)) / slant.condense - math.sin(r) * math.cos(r)
+    rotate = Transform(math.cos(r), -math.sin(r), math.sin(r), math.cos(r), 0, 0)
+    shear_vertically = Transform(1, math.tan(r), 0, 1, 0, 0)  # y += x tan r
+    shear_horizontally = Transform(1, 0, k, 1, 0, 0)  # x += k y
+    condense = Transform(slant.condense, 0, 0, 1, 0, 0)
+    # a.transform(b) applies b first, so the steps below run bottom to top.
+    transform = Transform().translate(0, pivot_y)
+    for step in (condense, shear_horizontally, shear_vertically, rotate):
+        transform = transform.transform(step)
+    return transform.translate(0, -pivot_y)
+
+
+def cut_single_storey_a(font: TTFont) -> None:
+    """Replaces `a` with `d` cut at the height of `o`, overshoot included; accented a's are composites and follow."""
+    glyph_set = font.getGlyphSet()
+    d_name, a_name = glyph_name(font=font, char="d"), glyph_name(font=font, char="a")
+    top = bounds(font=font, char="o")[3]
+    d = pathops.Path()
+    glyph_set[d_name].draw(d.getPen())
+    below_top = pathops.Path()
+    pen = below_top.getPen()
+    pen.moveTo((-500, -500))
+    pen.lineTo((-500, top))
+    pen.lineTo((2000, top))
+    pen.lineTo((2000, -500))
+    pen.closePath()
+    cut = pathops.op(d, below_top, pathops.PathOp.INTERSECTION)
+    area_pen = AreaPen()
+    cut.draw(area_pen)
+    glyph_pen = TTGlyphPen(None)
+    cut.draw(ReverseContourPen(glyph_pen) if area_pen.value > 0 else glyph_pen)
+    glyf = font["glyf"]
+    glyph = glyph_pen.glyph()
+    glyf[a_name] = glyph
+    glyph.recalcBounds(glyf)
+    hmtx = font["hmtx"]
+    hmtx[a_name] = (hmtx[d_name][0], glyph.xMin)
+
+
+def _decompose_transformed_components(
+    font: TTFont,
+    glyph_set: GlyphSet,
+) -> None:
+    """Decomposes the composites with scaled or flipped components, whose offsets alone can't carry a slant."""
+    glyf = font["glyf"]
+    for name in font.getGlyphOrder():
+        glyph = glyf[name]
+        if glyph.isComposite() and any(hasattr(component, "transform") for component in glyph.components):
+            recording = DecomposingRecordingPen(glyph_set)
+            glyph_set[name].draw(recording)
+            glyph_pen = TTGlyphPen(None)
+            recording.replay(glyph_pen)
+            glyf[name] = glyph_pen.glyph()
+
+
+def _transform_glyphs(
+    font: TTFont,
+    transform: Transform,
+    condense: float,
+) -> None:
+    glyf = font["glyf"]
+    hmtx = font["hmtx"]
+    glyph_set = font.getGlyphSet()
+    transformed = {}
+    for name in font.getGlyphOrder():
+        glyph = glyf[name]
+        if not glyph.isComposite() and glyph.numberOfContours > 0:
+            glyph_pen = TTGlyphPen(None)
+            glyph_set[name].draw(TransformPen(glyph_pen, transform))
+            transformed[name] = glyph_pen.glyph()
+    for name, glyph in transformed.items():
+        glyf[name] = glyph
+    # The component outlines already moved with the translation about the pivot; offsets take the linear part only.
+    linear = Transform(transform.xx, transform.xy, transform.yx, transform.yy, 0, 0)
+    for name in font.getGlyphOrder():
+        glyph = glyf[name]
+        if glyph.isComposite():
+            for component in glyph.components:
+                x, y = linear.transformPoint((component.x, component.y))
+                component.x, component.y = round(x), round(y)
+        advance, _ = hmtx[name]
+        glyph.recalcBounds(glyf)
+        lsb = getattr(glyph, "xMin", 0) if glyph.numberOfContours else 0
+        hmtx[name] = (round(advance * condense), lsb)
+
+
+def _scale_pair_kerning(
+    font: TTFont,
+    factor: float,
+) -> None:
+    if "GPOS" not in font:
+        return
+    for lookup in font["GPOS"].table.LookupList.Lookup:
+        for subtable in lookup.SubTable:
+            pair_pos = getattr(subtable, "ExtSubTable", subtable)
+            if pair_pos.LookupType != PAIR_ADJUSTMENT:
+                continue
+            if pair_pos.Format == 1:
+                records = [record for pair_set in pair_pos.PairSet for record in pair_set.PairValueRecord]
+            else:
+                records = [record for class1 in pair_pos.Class1Record for record in class1.Class2Record]
+            for record in records:
+                _scale_value_record(value_record=record.Value1, factor=factor)
+                _scale_value_record(value_record=record.Value2, factor=factor)
+
+
+def _scale_value_record(
+    value_record: object | None,
+    factor: float,
+) -> None:
+    if value_record is None:
+        return
+    for attribute in ("XAdvance", "XPlacement"):
+        if hasattr(value_record, attribute):
+            setattr(value_record, attribute, round(getattr(value_record, attribute) * factor))
+
+
+def set_italic_flags(
+    font: TTFont,
+    angle_deg: float,
+    bold: bool,
+) -> None:
+    """Sets the slant and the style bits, which link the italic to its upright as one family."""
+    # fontTools creates the attributes of these tables when it decompiles them, so the type checker can't see them.
+    font["post"].italicAngle = -angle_deg  # pyrefly: ignore[missing-attribute]
+    hhea = font["hhea"]
+    hhea.caretSlopeRise = CARET_SLOPE_RISE  # pyrefly: ignore[missing-attribute]
+    caret_slope_run = round(CARET_SLOPE_RISE * math.tan(math.radians(angle_deg)))
+    hhea.caretSlopeRun = caret_slope_run  # pyrefly: ignore[missing-attribute]
+    os2 = font["OS/2"]
+    style_bits = FS_ITALIC | (FS_BOLD if bold else 0)
+    fs_selection = (os2.fsSelection & ~(FS_REGULAR | FS_BOLD | FS_ITALIC)) | style_bits  # pyrefly: ignore[missing-attribute]
+    os2.fsSelection = fs_selection  # pyrefly: ignore[missing-attribute]
+    font["head"].macStyle = MAC_ITALIC | (MAC_BOLD if bold else 0)  # pyrefly: ignore[missing-attribute]

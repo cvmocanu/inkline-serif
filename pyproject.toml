@@ -37,6 +37,8 @@ testpaths = ["tests"]
 
 [tool.pyrefly]
 preset = "strict"
+# The tests import their helper modules by their bare names, as pytest puts tests/ on the path.
+search-path = ["src", "tests"]
 
 [tool.ruff]
 line-length = 120

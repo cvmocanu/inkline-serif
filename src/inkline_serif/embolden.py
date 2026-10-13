@@ -1,131 +1,123 @@
-"""Anisotropic emboldening of a TrueType (glyf) font.
+"""Anisotropic emboldening of a TrueType font.
 
-Port of FreeType's FT_Outline_EmboldenXY: every point is pushed outward along the
-corner bisector, so stems grow by `xs` font units and horizontal strokes by `ys`.
-Counters shrink accordingly (inner contours have opposite orientation).
-
-usage: embolden.py IN.ttf OUT.ttf XS YS "Family Name" "Style"
+A port of FreeType's FT_Outline_EmboldenXY: every point moves outward along the corner bisector, so stems grow by
+`x` font units and horizontal strokes by `y`. Counters shrink, because inner contours run the opposite way.
 """
+
 import math
-import sys
+from dataclasses import dataclass
 
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
+from fontTools.ttLib.tables.ttProgram import Program
 
-src, dst, XS, YS, family, style = sys.argv[1], sys.argv[2], float(sys.argv[3]), float(sys.argv[4]), sys.argv[5], sys.argv[6]
+from inkline_serif.outlines import normalize_outlines
 
-f = TTFont(src)
-glyf = f["glyf"]
-hmtx = f["hmtx"]
+type Point = tuple[float, float]
 
-# Normalize outlines: merge overlapping contours, then force TrueType (clockwise) direction.
-from fontTools.ttLib.removeOverlaps import removeOverlaps
-from fontTools.pens.areaPen import AreaPen
-from fontTools.pens.ttGlyphPen import TTGlyphPen
-from fontTools.pens.reverseContourPen import ReverseContourPen
+# Hinting tables of the source font; they no longer match the outlines, and ttfautohint writes its own.
+STALE_HINTING_TABLES = ("fpgm", "prep", "cvt ", "hdmx", "LTSH", "VDMX")
 
-removeOverlaps(f)
-gs = f.getGlyphSet()
-for gname in f.getGlyphOrder():
-    g = glyf[gname]
-    if g.isComposite() or g.numberOfContours <= 0:
-        continue
-    ap = AreaPen(gs); gs[gname].draw(ap)
-    if ap.value > 0:  # counter-clockwise overall -> reverse
-        tp = TTGlyphPen(gs); gs[gname].draw(ReverseContourPen(tp))
-        glyf[gname] = tp.glyph()
-gs = f.getGlyphSet()
+# Corners sharper than this (cosine between the incoming and outgoing direction) are left in place.
+SHARPEST_CORNER_COS = -0.9375
 
 
-def embolden_contour(pts, xs, ys):
-    """pts: list of (x, y); TrueType orientation (outer contours clockwise)."""
-    n = len(pts)
-    if n < 3:
-        return pts
-    xs, ys = xs / 2, ys / 2
-    out_pts = []
+@dataclass(frozen=True)
+class Emboldening:
+    """Extra stroke thickness, in font units: `x` for vertical stems, `y` for horizontal strokes."""
 
-    def unit(a, b):
-        dx, dy = b[0] - a[0], b[1] - a[1]
-        l = math.hypot(dx, dy)
-        return (dx / l, dy / l) if l else (0.0, 0.0)
+    x: float
+    y: float
 
-    for j in range(n):
-        prev, cur, nxt = pts[j - 1], pts[j], pts[(j + 1) % n]
-        # skip zero-length neighbours
-        k = 1
-        while pts[j - k] == cur and k < n:
-            k += 1
-        prev = pts[j - k]
-        k = 1
-        while pts[(j + k) % n] == cur and k < n:
-            k += 1
-        nxt = pts[(j + k) % n]
-        vin, vout = unit(prev, cur), unit(cur, nxt)
-        d = vin[0] * vout[0] + vin[1] * vout[1]
-        if d > -0.9375:
-            d += 1
-            sx = -(vin[1] + vout[1])  # TrueType orientation
-            sy = vin[0] + vout[0]
-            q = -(vout[0] * vin[1] - vout[1] * vin[0])
-            l = min(xs, ys)
-            if q <= l * d:
-                sx, sy = sx * xs / d, sy * ys / d
-            else:
-                sx, sy = sx * l / q, sy * l / q
+
+def embolden(
+    font: TTFont,
+    emboldening: Emboldening,
+) -> None:
+    """Thickens every glyph, keeping its side bearings by shifting it right by half the extra stem width."""
+    # Reversed or overlapping contours would get thinner instead of bolder.
+    normalize_outlines(font)
+    glyf = font["glyf"]
+    hmtx = font["hmtx"]
+    shift = emboldening.x / 2
+    extra_advance = round(emboldening.x)
+    for name in font.getGlyphOrder():
+        glyph = glyf[name]
+        advance, lsb = hmtx[name]
+        if glyph.isComposite():
+            # The components are emboldened in their own glyphs; only the placement follows.
+            for component in glyph.components:
+                component.x += round(shift)
+            hmtx[name] = (advance + extra_advance, lsb)
+        elif glyph.numberOfContours <= 0:
+            hmtx[name] = (advance + extra_advance if advance else advance, lsb)
         else:
-            sx = sy = 0.0
-        out_pts.append((cur[0] + sx, cur[1] + sy))
-    return out_pts
+            points = list(glyph.coordinates)
+            emboldened: list[Point] = []
+            start = 0
+            for end in glyph.endPtsOfContours:
+                emboldened.extend(embolden_contour(points=points[start : end + 1], emboldening=emboldening))
+                start = end + 1
+            glyph.coordinates = GlyphCoordinates([(round(x + shift), round(y)) for x, y in emboldened])
+            glyph.program = Program()
+            glyph.program.fromBytecode(b"")
+            glyph.recalcBounds(glyf)
+            hmtx[name] = (advance + extra_advance, glyph.xMin)
+    for tag in STALE_HINTING_TABLES:
+        if tag in font:
+            del font[tag]
 
 
-for name in f.getGlyphOrder():
-    g = glyf[name]
-    adv, lsb = hmtx[name]
-    if g.isComposite():
-        # components are emboldened in their own glyphs; keep spacing consistent
-        for c in g.components:
-            c.x += round(XS / 2)
-        hmtx[name] = (adv + round(XS), lsb)
-        continue
-    if g.numberOfContours <= 0:
-        hmtx[name] = (adv + round(XS) if adv else adv, lsb)
-        continue
-    coords = list(g.coordinates)
-    new = []
-    start = 0
-    for end in g.endPtsOfContours:
-        new.extend(embolden_contour(coords[start:end + 1], XS, YS))
-        start = end + 1
-    # shift right by XS/2 so side bearings are preserved, widen advance by XS
-    g.coordinates = GlyphCoordinates([(round(x + XS / 2), round(y)) for x, y in new])
-    g.program = None
-    if hasattr(g, "program"):
-        from fontTools.ttLib.tables import ttProgram
-        g.program = ttProgram.Program(); g.program.fromBytecode(b"")
-    g.recalcBounds(glyf)
-    hmtx[name] = (adv + round(XS), g.xMin)
+def embolden_contour(
+    points: list[Point],
+    emboldening: Emboldening,
+) -> list[Point]:
+    """Moves each point of a closed contour outward; the contour must run clockwise, as TrueType outer contours do."""
+    count = len(points)
+    if count < 3:
+        return points
+    half_x, half_y = emboldening.x / 2, emboldening.y / 2
+    shift_limit = min(half_x, half_y)
+    moved: list[Point] = []
+    for j, current in enumerate(points):
+        previous = _neighbor(points=points, index=j, step=-1)
+        following = _neighbor(points=points, index=j, step=1)
+        in_x, in_y = _unit(start=previous, end=current)
+        out_x, out_y = _unit(start=current, end=following)
+        cos = in_x * out_x + in_y * out_y
+        if cos > SHARPEST_CORNER_COS:
+            d = cos + 1
+            shift_x, shift_y = -(in_y + out_y), in_x + out_x
+            q = -(out_x * in_y - out_y * in_x)
+            if q <= shift_limit * d:
+                shift_x, shift_y = shift_x * half_x / d, shift_y * half_y / d
+            else:
+                shift_x, shift_y = shift_x * shift_limit / q, shift_y * shift_limit / q
+        else:
+            shift_x = shift_y = 0.0
+        moved.append((current[0] + shift_x, current[1] + shift_y))
+    return moved
 
-# drop old (empty) hinting tables; ttfautohint adds its own later
-for t in ("fpgm", "prep", "cvt ", "hdmx", "LTSH", "VDMX"):
-    if t in f:
-        del f[t]
 
-# rename so it never collides with the original Domine on a device
-name = f["name"]
-ps = family.replace(" ", "") + "-" + style.replace(" ", "")
-for rec in list(name.names):
-    if rec.nameID in (1, 16):
-        rec.string = family
-    elif rec.nameID in (2, 17):
-        rec.string = style
-    elif rec.nameID == 3:
-        rec.string = f"{ps};modified"
-    elif rec.nameID == 4:
-        rec.string = f"{family} {style}"
-    elif rec.nameID == 6:
-        rec.string = ps
-name.setName(f"Modified from Domine (OFL 1.1): horizontals +{YS:g}u, verticals +{XS:g}u", 10, 3, 1, 0x409)
-f["head"].fontRevision = f["head"].fontRevision
-f.save(dst)
-print("wrote", dst)
+def _neighbor(
+    points: list[Point],
+    index: int,
+    step: int,
+) -> Point:
+    """The nearest point in the direction `step` that differs from the point at `index`."""
+    count = len(points)
+    offset = 1
+    while points[(index + offset * step) % count] == points[index] and offset < count:
+        offset += 1
+    return points[(index + offset * step) % count]
+
+
+def _unit(
+    start: Point,
+    end: Point,
+) -> Point:
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length = math.hypot(dx, dy)
+    if length == 0:
+        return (0.0, 0.0)
+    return (dx / length, dy / length)
