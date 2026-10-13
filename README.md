@@ -97,6 +97,8 @@ uv run inkline-preview vs-bookerly.png Bookerly=/path/Bookerly-Regular.ttf Inkli
 
 ## License
 
+The code is under the [MIT License](LICENSE). The fonts are under the SIL Open Font License 1.1, which they inherit from Domine ([`OFL.txt`](input/OFL.txt)):
+
 - Domine is SIL OFL 1.1 with **Reserved Font Name "Domine"** (stated in `OFL.txt`, *not* in the font's name table). Modified versions **must not** use "Domine" in the font name, which is why the family is "Inkline Serif".
 - Name ID 10 (description) records the modification. Mentioning Domine there as attribution is fine.
 - `OFL.txt` must accompany any distribution. The fonts can't be sold on their own.

@@ -5,6 +5,8 @@ description = "Domine, emboldened, hinted and slanted to read better on e-ink"
 authors = [
     { name = "Cristian Mocanu", email = "cvmocanu@gmail.com" }
 ]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
     "fonttools==4.65.0",
