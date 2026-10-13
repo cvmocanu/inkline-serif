@@ -1,0 +1,60 @@
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.ttGlyphPen import TTGlyphPen
+from fontTools.ttLib import TTFont
+
+type Point = tuple[float, float]
+type Contour = list[Point]
+
+UNITS_PER_EM = 1000
+
+
+def font(
+    glyphs: dict[str, list[Contour]] | None = None,
+    family: str = "Any Family",
+    style: str = "Regular",
+) -> TTFont:
+    """A TrueType font whose glyphs are drawn as polygons; `.notdef` is added empty."""
+    drawn = {".notdef": TTGlyphPen(None).glyph()}
+    for name, contours in (glyphs or {}).items():
+        pen = TTGlyphPen(None)
+        for contour in contours:
+            pen.moveTo(contour[0])
+            for point in contour[1:]:
+                pen.lineTo(point)
+            pen.closePath()
+        drawn[name] = pen.glyph()
+    builder = FontBuilder(UNITS_PER_EM, isTTF=True)
+    builder.setupGlyphOrder(list(drawn))
+    builder.setupCharacterMap({})
+    builder.setupGlyf(drawn)
+    builder.setupHorizontalMetrics(
+        {name: (UNITS_PER_EM // 2, getattr(glyph, "xMin", 0)) for name, glyph in drawn.items()}
+    )
+    builder.setupHorizontalHeader()
+    ps_name = f"{family}-{style}".replace(" ", "")
+    builder.setupNameTable(
+        {
+            "familyName": family,
+            "styleName": style,
+            "uniqueFontIdentifier": ps_name,
+            "fullName": f"{family} {style}",
+            "psName": ps_name,
+        }
+    )
+    builder.setupOS2()
+    builder.setupPost()
+    return builder.font
+
+
+def rectangle(
+    x_min: float,
+    y_min: float,
+    x_max: float,
+    y_max: float,
+) -> Contour:
+    """A clockwise rectangle, as TrueType draws outer contours."""
+    return [(x_min, y_min), (x_min, y_max), (x_max, y_max), (x_max, y_min)]
+
+
+def counter_clockwise(contour: Contour) -> Contour:
+    return contour[::-1]
