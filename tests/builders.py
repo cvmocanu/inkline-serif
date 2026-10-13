@@ -11,6 +11,7 @@ UNITS_PER_EM = 1000
 
 def font(
     glyphs: dict[str, list[Contour]] | None = None,
+    composites: dict[str, list[str]] | None = None,
     family: str = "Any Family",
     style: str = "Regular",
     weight_value: float = 400,
@@ -18,6 +19,7 @@ def font(
 ) -> TTFont:
     """
     A TrueType font whose glyphs are drawn as polygons; `.notdef` is added empty.
+    Each composite places its components, named by glyph, at the origin.
     Its STAT has a weight axis only, as static Google Fonts builds do.
     """
     drawn = {".notdef": TTGlyphPen(None).glyph()}
@@ -28,6 +30,11 @@ def font(
             for point in contour[1:]:
                 pen.lineTo(point)
             pen.closePath()
+        drawn[name] = pen.glyph()
+    for name, components in (composites or {}).items():
+        pen = TTGlyphPen(dict(drawn))
+        for component in components:
+            pen.addComponent(component, (1, 0, 0, 1, 0, 0))
         drawn[name] = pen.glyph()
     builder = FontBuilder(UNITS_PER_EM, isTTF=True)
     builder.setupGlyphOrder(list(drawn))

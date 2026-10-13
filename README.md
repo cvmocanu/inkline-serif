@@ -5,7 +5,9 @@ It keeps Domine's large x-height and overall look, but adds the stroke weight an
 Bookerly look darker, plus a generated Italic and Bold Italic, which Domine lacks.
 
 The fonts are in [`output/fonts/`](output/fonts/). To install them, copy the `.ttf` files into the Kindle's `fonts/` folder.
-[`output/previews/`](output/previews/) shows them at 10 pt and 300 ppi, quantized to e-ink's 16 grey levels.
+[The preview](output/previews/domine-vs-inkline-serif-10pt-300ppi.png) sets each style under its Domine counterpart, at 10 pt and 300 ppi,
+quantized to e-ink's 16 grey levels. Domine has no italic, so its italics there are synthetic: sheared by the same angle,
+the way a renderer slants a font that lacks one.
 
 ## Why: Domine vs Bookerly
 
@@ -47,7 +49,7 @@ The tuning values are the constants at the top of [`build.py`](src/inkline_serif
    - Every style gets a STAT table with a weight and an italic axis ([`style_axes.py`](src/inkline_serif/style_axes.py)), so apps that read STAT group the uprights and italics as one family. Domine's own STAT has a weight axis only.
 3. **Hint with ttfautohint**, with strong stem widths in every rendering mode, which snaps stems to full pixels.
 4. **Check the outlines** ([`outlines.py`](src/inkline_serif/outlines.py)): the build fails, and writes nothing, if any glyph is counter-clockwise or has overlaps.
-5. **Write** the fonts with a copy of `OFL.txt` to `output/fonts/`, then render the previews to `output/previews/`.
+5. **Write** the fonts with a copy of `OFL.txt` to `output/fonts/`, then render the preview to `output/previews/`.
 
 ## Layout
 
@@ -55,7 +57,7 @@ The tuning values are the constants at the top of [`build.py`](src/inkline_serif
 input/                Domine-Regular.ttf, Domine-Bold.ttf (unmodified static Google Fonts builds) and their OFL.txt
 output/               build output (committed)
   fonts/              the four Inkline Serif styles and OFL.txt: the folder to distribute
-  previews/           10 pt @ 300 ppi renderings, quantized like e-ink
+  previews/           Domine vs Inkline Serif, style by style, at 10 pt @ 300 ppi, quantized like e-ink
 src/inkline_serif/
   build.py            the pipeline and its tuning values (inkline-build)
   embolden.py         anisotropic emboldening
@@ -66,6 +68,7 @@ src/inkline_serif/
   glyphs.py           glyph lookup by character
   measure.py          stroke widths and FreeType ink coverage (inkline-measure)
   preview.py          e-ink-like sample renderings (inkline-preview)
+  synthetic_oblique.py  the plain shear that renderers apply to fonts without an italic
 tests/
 check.sh              format, lint, type check and tests
 ```

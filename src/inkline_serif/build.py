@@ -20,6 +20,7 @@ from inkline_serif.italicize import Slant, italicize
 from inkline_serif.outlines import find_bad_outlines
 from inkline_serif.preview import LabeledFont, save_preview
 from inkline_serif.style_axes import set_style_axes
+from inkline_serif.synthetic_oblique import shear
 
 FAMILY = "Inkline Serif"
 
@@ -56,7 +57,7 @@ STEM_WIDTH_MODE = StemWidthMode.STRONG
 
 INPUT_DIR = Path("input")
 FONTS_DIR = Path("output/fonts")
-PREVIEWS_DIR = Path("output/previews")
+PREVIEW = Path("output/previews/domine-vs-inkline-serif-10pt-300ppi.png")
 LICENSE = "OFL.txt"
 # The fonts are stamped with the time of the last commit that changed these, so a rebuild of unchanged sources
 # reproduces the committed fonts byte for byte, and a commit of only the output leaves that time alone.
@@ -89,7 +90,7 @@ def main() -> None:
         print("wrote", path)
     # The OFL has to accompany any distribution of the fonts.
     shutil.copyfile(INPUT_DIR / LICENSE, FONTS_DIR / LICENSE)
-    write_previews()
+    write_preview(fonts)
 
 
 def build_upright(weight: Weight) -> bytes:
@@ -146,23 +147,31 @@ def last_change_epoch() -> int:
     return int(result.stdout)
 
 
-def write_previews() -> None:
-    PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
-    save_preview(
-        path=PREVIEWS_DIR / "upright-10pt-300ppi.png",
-        fonts=[
-            LabeledFont(label="Domine", path=INPUT_DIR / "Domine-Regular.ttf"),
-            LabeledFont(label=FAMILY, path=font_path("Regular")),
-            LabeledFont(label=f"{FAMILY} Bold", path=font_path("Bold")),
-        ],
-    )
-    save_preview(
-        path=PREVIEWS_DIR / "italic-10pt-300ppi.png",
-        fonts=[
-            LabeledFont(label=f"{FAMILY} Italic", path=font_path("Italic")),
-            LabeledFont(label=f"{FAMILY} Bold Italic", path=font_path("Bold Italic")),
-        ],
-    )
+def write_preview(fonts: dict[str, bytes]) -> None:
+    """Pairs each Inkline Serif style with its Domine counterpart; Domine's italics are synthesized by shearing."""
+    groups: list[list[LabeledFont]] = []
+    for weight in WEIGHTS:
+        domine = (INPUT_DIR / weight.source).read_bytes()
+        upright_pair = [
+            LabeledFont(label=f"Domine {weight.upright_style}", data=domine),
+            LabeledFont(label=f"{FAMILY} {weight.upright_style}", data=fonts[weight.upright_style]),
+        ]
+        italic_pair = [
+            LabeledFont(
+                label=f"Domine {weight.italic_style} (synthetic: sheared {SLANT.angle_deg:g}°)",
+                data=synthetic_italic(domine),
+            ),
+            LabeledFont(label=f"{FAMILY} {weight.italic_style}", data=fonts[weight.italic_style]),
+        ]
+        groups.extend([upright_pair, italic_pair])
+    PREVIEW.parent.mkdir(parents=True, exist_ok=True)
+    save_preview(path=PREVIEW, groups=groups)
+
+
+def synthetic_italic(upright: bytes) -> bytes:
+    font = TTFont(BytesIO(upright))
+    shear(font=font, angle_deg=SLANT.angle_deg)
+    return to_bytes(font)
 
 
 def font_path(style: str) -> Path:
